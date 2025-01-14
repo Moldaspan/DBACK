@@ -36,20 +36,24 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser):
-    email = models.EmailField(verbose_name='email address', max_length=255, unique=True)
+    email = models.EmailField(verbose_name="email address", max_length=255, unique=True)
     first_name = models.CharField(max_length=30)
     last_name = models.CharField(max_length=30)
     is_active = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
     verification_token = models.CharField(max_length=255, null=True, blank=True)
-
-    failed_attempts = models.PositiveIntegerField(default=0)  # Число неудачных попыток
-    lockout_time = models.DateTimeField(null=True, blank=True)  # Время блокировки
+    failed_attempts = models.PositiveIntegerField(default=0)
+    lockout_time = models.DateTimeField(null=True, blank=True)
 
     objects = UserManager()
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name', 'last_name']
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["first_name", "last_name"]
+
+    def reset_lockout(self):
+        self.failed_attempts = 0
+        self.lockout_time = None
+        self.save()
 
     def __str__(self):
         return self.email
