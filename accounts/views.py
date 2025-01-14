@@ -1,3 +1,4 @@
+import uuid
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -5,7 +6,7 @@ from rest_framework import status
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from datetime import timedelta
-from .models import User
+from .models import User, PasswordResetToken
 from .serializers import UserRegistrationSerializer
 from .utils import generate_verification_token
 from django.core.mail import send_mail
@@ -126,3 +127,66 @@ def login_user(request):
         },
         status=status.HTTP_200_OK
     )
+
+
+@api_view(['POST'])
+def request_password_reset(request):
+    email = request.data.get('email')
+
+    # Проверяем, существует ли пользователь с таким email
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response({"error": "User with this email does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Генерируем токен для сброса пароля
+    token = str(uuid.uuid4())
+    expires_at = timezone.now() + timedelta(hours=1)  # Токен будет действовать 1 час
+    reset_token = PasswordResetToken.objects.create(
+        user=user,
+        token=token,
+        expires_at=expires_at
+    )
+
+    # Формируем ссылку для сброса пароля
+    reset_url = f"{settings.SITE_URL}/reset-password/{token}/"
+
+    # Отправляем email с ссылкой для сброса пароля
+    send_mail(
+        'Password Reset Request',
+        f'Click the following link to reset your password: {reset_url}',
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
+    )
+
+    return Response({"message": "Password reset link has been sent to your email."}, status=status.HTTP_200_OK)
+
+
+
+@api_view(['POST'])
+def reset_password(request, token):
+    try:
+        reset_token = PasswordResetToken.objects.get(token=token)
+    except PasswordResetToken.DoesNotExist:
+        return Response({"error": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if reset_token.is_expired():
+        return Response({"error": "Token has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Получаем новый пароль
+    new_password = request.data.get('new_password')
+    confirm_password = request.data.get('confirm_password')
+
+    if new_password != confirm_password:
+        return Response({"error": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Обновляем пароль пользователя
+    user = reset_token.user
+    user.set_password(new_password)
+    user.save()
+
+    # Удаляем токен
+    reset_token.delete()
+
+    return Response({"message": "Your password has been successfully reset."}, status=status.HTTP_200_OK)
