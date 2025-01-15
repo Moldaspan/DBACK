@@ -64,7 +64,8 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'eramoldaspan@gmail.com'
 EMAIL_HOST_PASSWORD = 'rite pdfb jtiv lrdc'
 DEFAULT_FROM_EMAIL = 'ermoldaspan@gmail.com'
-SITE_URL = 'http://localhost:8000/'
+SITE_URL = 'http://localhost:8000'
+SIGNUP_EMAIL_CONFIRMATION = True
 
 
 
