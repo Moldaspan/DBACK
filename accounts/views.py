@@ -8,43 +8,35 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from datetime import timedelta
 
+import hashlib
 from . import serializers
 from .models import User, PasswordResetToken
 from .serializers import UserRegistrationSerializer
-from .utils import generate_verification_token
+from .utils import generate_verification_token, send_email_dynamic
 from django.core.mail import send_mail
 from django.conf import settings
 
 
 def send_verification_email(user):
     token = generate_verification_token()
-    user.verification_token = token
+    user.set_verification_token(token)
     user.verification_token_expiry = timezone.now() + timedelta(hours=24)
     user.save()
 
     verification_url = f"{settings.SITE_URL}/accounts/verify-email/{token}/"
-    print(f"Generated verification URL: {verification_url}")
-
+    subject = "Email Verification"
     html_message = f"""
-    <html>
-        <body>
-            <p>Thank you for registering on our site!</p>
-            <p>Please confirm your email by clicking the button below:</p>
-            <a href="{verification_url}" style="display: inline-block; padding: 10px 20px; color: white; background-color: #007BFF; text-decoration: none; border-radius: 5px;">
-                Confirm Email
-            </a>
-        </body>
-    </html>
+        <html>
+            <body>
+                <p>Thank you for registering on our site!</p>
+                <p>Please confirm your email by clicking the button below:</p>
+                <a href="{verification_url}" style="display: inline-block; padding: 10px 20px; color: white; background-color: #007BFF; text-decoration: none; border-radius: 5px;">
+                    Confirm Email
+                </a>
+            </body>
+        </html>
     """
-
-    send_mail(
-        subject='Email Confirmation',
-        message=f'Please confirm your email by clicking the link: {verification_url}',
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
-        html_message=html_message,
-        fail_silently=False,
-    )
+    send_email_dynamic(subject, html_message, user.email)
 
 
 @api_view(['POST'])
@@ -63,7 +55,12 @@ def user_registration(request):
         user = serializer.save()
 
         if settings.SIGNUP_EMAIL_CONFIRMATION:
-            send_verification_email(user)
+            try:
+                send_verification_email(user)
+            except Exception as e:
+                return Response({"error": f"Failed to send verification email: {str(e)}"},
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
             return Response(
                 {
                     "message": "The user has been successfully registered. Please check your email for confirmation.",
@@ -100,19 +97,26 @@ def user_registration(request):
 @api_view(['GET'])
 def verify_email(request, token):
     try:
-        user = User.objects.get(verification_token=token)
+        # Генерируем хэш токена
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        # Ищем пользователя по хэшу токена
+        user = User.objects.get(verification_token_hash=token_hash)
+
         if user.verification_token_expiry and timezone.now() > user.verification_token_expiry:
             return Response(
                 {"error": "The verification token has expired. Please request a new confirmation email."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Подтверждаем email
         user.is_verified = True
         user.is_active = True
-        user.verification_token = None
+        user.verification_token_hash = None
         user.verification_token_expiry = None
         user.save()
 
+        # Генерируем JWT-токены
         refresh = RefreshToken.for_user(user)
         access_token = refresh.access_token
 
@@ -192,52 +196,63 @@ def request_password_reset(request):
     except User.DoesNotExist:
         return Response({"error": "User with this email does not exist."}, status=status.HTTP_400_BAD_REQUEST)
 
-    token = str(uuid.uuid4())
+    token = generate_verification_token()
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     expires_at = timezone.now() + timedelta(hours=1)
-    reset_token = PasswordResetToken.objects.create(
-        user=user,
-        token=token,
-        expires_at=expires_at
-    )
 
-    reset_url = f"{settings.SITE_URL}/reset-password/{token}/"
+    PasswordResetToken.objects.create(user=user, token_hash=token_hash, expires_at=expires_at)
 
-    send_mail(
-        'Password Reset Request',
-        f'Click the following link to reset your password: {reset_url}',
-        settings.DEFAULT_FROM_EMAIL,
-        [user.email],
-        fail_silently=False,
-    )
-
+    reset_url = f"{settings.SITE_URL}/accounts/reset-password/{token}/"
+    subject = "Password Reset Request"
+    html_message = f"""
+        <html>
+            <body>
+                <p>You requested a password reset.</p>
+                <p>Please click the button below to reset your password:</p>
+                <a href="{reset_url}" style="display: inline-block; padding: 10px 20px; color: white; background-color: #007BFF; text-decoration: none; border-radius: 5px;">
+                    Reset Password
+                </a>
+            </body>
+        </html>
+    """
+    send_email_dynamic(subject, html_message, user.email)
     return Response({"message": "Password reset link has been sent to your email."}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
 def reset_password(request, token):
     try:
-        reset_token = PasswordResetToken.objects.get(token=token)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        reset_token = PasswordResetToken.objects.get(token_hash=token_hash)
+
+        if reset_token.is_expired():
+            return Response({"error": "Token has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        if new_password != confirm_password:
+            return Response({"error": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_password(new_password)
+        except serializers.ValidationError as e:
+            return Response({"error": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = reset_token.user
+        user.set_password(new_password)
+        user.save()
+
+        reset_token.delete()
+
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+
+        return Response({
+            "message": "Your password has been successfully reset.",
+            "access_token": str(access_token),
+            "refresh_token": str(refresh)
+        }, status=status.HTTP_200_OK)
+
     except PasswordResetToken.DoesNotExist:
         return Response({"error": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
-
-    if reset_token.is_expired():
-        return Response({"error": "Token has expired."}, status=status.HTTP_400_BAD_REQUEST)
-
-    new_password = request.data.get('new_password')
-    confirm_password = request.data.get('confirm_password')
-
-    if new_password != confirm_password:
-        return Response({"error": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        validate_password(new_password)
-    except serializers.ValidationError as e:
-        return Response({"error": e.messages}, status=status.HTTP_400_BAD_REQUEST)
-
-    user = reset_token.user
-    user.set_password(new_password)
-    user.save()
-
-    reset_token.delete()
-
-    return Response({"message": "Your password has been successfully reset."}, status=status.HTTP_200_OK)

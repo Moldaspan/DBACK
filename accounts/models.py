@@ -1,6 +1,5 @@
-import uuid
+import hashlib
 from django.utils import timezone
-
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 
@@ -41,7 +40,7 @@ class User(AbstractBaseUser):
     last_name = models.CharField(max_length=30)
     is_active = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
-    verification_token = models.CharField(max_length=255, null=True, blank=True)
+    verification_token_hash = models.CharField(max_length=255, null=True, blank=True)
     verification_token_expiry = models.DateTimeField(null=True, blank=True)
     failed_attempts = models.PositiveIntegerField(default=0)
     lockout_time = models.DateTimeField(null=True, blank=True)
@@ -50,6 +49,13 @@ class User(AbstractBaseUser):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["first_name", "last_name"]
+
+    def set_verification_token(self, token):
+        self.verification_token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    def verify_token(self, token):
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return self.verification_token_hash == token_hash
 
     def is_verification_token_expired(self):
         return self.verification_token_expiry and timezone.now() > self.verification_token_expiry
@@ -65,12 +71,19 @@ class User(AbstractBaseUser):
 
 class PasswordResetToken(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    token = models.CharField(max_length=255, unique=True)
+    token_hash = models.CharField(max_length=255, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+
+    def set_token(self, token):
+        self.token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    def verify_token(self, token):
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return self.token_hash == token_hash
 
     def is_expired(self):
         return timezone.now() > self.expires_at
 
     def __str__(self):
-        return self.token
+        return f"Token for {self.user.email}"

@@ -68,7 +68,6 @@ SITE_URL = 'http://localhost:8000'
 SIGNUP_EMAIL_CONFIRMATION = True
 
 
-
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
