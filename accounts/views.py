@@ -15,8 +15,19 @@ from .serializers import UserRegistrationSerializer
 from .utils import generate_verification_token, send_email_dynamic
 from django.core.mail import send_mail
 from django.conf import settings
-
-
+from django_ratelimit.decorators import ratelimit
+from django_ratelimit.exceptions import Ratelimited
+from django.http import JsonResponse
+def custom_ratelimit_handler(view):
+    def wrapped_view(*args, **kwargs):
+        try:
+            return view(*args, **kwargs)
+        except Ratelimited:
+            return JsonResponse(
+                {"detail": "Too many requests. Please try again later."},
+                status=429
+            )
+    return wrapped_view
 def send_verification_email(user):
     token = generate_verification_token()
     user.set_verification_token(token)
@@ -40,6 +51,8 @@ def send_verification_email(user):
 
 
 @api_view(['POST'])
+@custom_ratelimit_handler
+@ratelimit(key='ip', rate='5/m', block=True)  # Ограничиваем до 5 запросов в минуту на IP
 def user_registration(request):
     email = request.data.get('email')
 
@@ -95,6 +108,7 @@ def user_registration(request):
 
 
 @api_view(['GET'])
+@ratelimit(key='ip', rate='5/h', block=True)
 def verify_email(request, token):
     try:
         # Генерируем хэш токена
@@ -136,6 +150,7 @@ def verify_email(request, token):
 
 
 @api_view(["POST"])
+@ratelimit(key='ip', rate='10/m', block=True)  # Ограничиваем до 10 запросов в минуту на IP
 def login_user(request):
     email = request.data.get("email")
     password = request.data.get("password")
@@ -189,6 +204,7 @@ def login_user(request):
 
 
 @api_view(['POST'])
+@ratelimit(key='post:email', rate='3/h', block=True)  # Лимитируем по email
 def request_password_reset(request):
     email = request.data.get('email')
     try:
