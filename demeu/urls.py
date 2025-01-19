@@ -15,8 +15,15 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('accounts/', include('accounts.urls')),
+    path('profiles/', include('profiles.urls')),
 ]
+
+# Добавляем маршруты для обработки медиафайлов (например, аватары)
+if settings.DEBUG:  # Только для отладки. В продакшене используйте Nginx или другой сервер для медиа.
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

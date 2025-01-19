@@ -1,9 +1,10 @@
 import uuid
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, permissions
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from datetime import timedelta
@@ -18,6 +19,7 @@ from django.conf import settings
 from django_ratelimit.decorators import ratelimit
 from django_ratelimit.exceptions import Ratelimited
 from django.http import JsonResponse
+
 def custom_ratelimit_handler(view):
     def wrapped_view(*args, **kwargs):
         try:
@@ -28,6 +30,8 @@ def custom_ratelimit_handler(view):
                 status=429
             )
     return wrapped_view
+
+
 def send_verification_email(user):
     token = generate_verification_token()
     user.set_verification_token(token)
@@ -53,6 +57,7 @@ def send_verification_email(user):
 @api_view(['POST'])
 @custom_ratelimit_handler
 @ratelimit(key='ip', rate='5/m', block=True)  # Ограничиваем до 5 запросов в минуту на IP
+@permission_classes([AllowAny])
 def user_registration(request):
     email = request.data.get('email')
 
@@ -109,6 +114,7 @@ def user_registration(request):
 
 @api_view(['GET'])
 @ratelimit(key='ip', rate='5/h', block=True)
+@permission_classes([AllowAny])
 def verify_email(request, token):
     try:
         # Генерируем хэш токена
@@ -151,6 +157,7 @@ def verify_email(request, token):
 
 @api_view(["POST"])
 @ratelimit(key='ip', rate='10/m', block=True)  # Ограничиваем до 10 запросов в минуту на IP
+@permission_classes([AllowAny])
 def login_user(request):
     email = request.data.get("email")
     password = request.data.get("password")
@@ -205,6 +212,7 @@ def login_user(request):
 
 @api_view(['POST'])
 @ratelimit(key='post:email', rate='3/h', block=True)  # Лимитируем по email
+@permission_classes([AllowAny])
 def request_password_reset(request):
     email = request.data.get('email')
     try:
@@ -236,6 +244,7 @@ def request_password_reset(request):
 
 
 @api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
 def reset_password(request, token):
     try:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
