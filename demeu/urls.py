@@ -22,7 +22,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('accounts/', include('accounts.urls')),
     path('profiles/', include('profiles.urls')),
-    path('publications/', include('publications.urls'))
+    path('publications/', include('publications.urls')),
+    path('comments/', include('comments.urls')),
 ]
 
 # Добавляем маршруты для обработки медиафайлов (например, аватары)
