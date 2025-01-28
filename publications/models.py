@@ -4,7 +4,6 @@ from django.core.exceptions import ValidationError
 from phonenumber_field.modelfields import PhoneNumberField
 
 
-# Validators
 def validate_file_size(file):
     max_size = 10 * 1024 * 1024  # 10 MB
     if file.size > max_size:
